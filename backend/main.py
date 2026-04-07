@@ -323,6 +323,67 @@ async def lemonsqueezy_webhook(
 
 
 # ---------------------------------------------------------------------------
+# PayPal Webhook
+# ---------------------------------------------------------------------------
+@app.post("/webhook/paypal")
+async def paypal_webhook(request: Request):
+    """
+    Handle PayPal subscription lifecycle events.
+
+    Events handled:
+    - BILLING.SUBSCRIPTION.ACTIVATED   -> upgrade to pro
+    - BILLING.SUBSCRIPTION.CANCELLED   -> downgrade to free
+    - BILLING.SUBSCRIPTION.EXPIRED     -> downgrade to free
+    - BILLING.SUBSCRIPTION.SUSPENDED   -> downgrade to free
+
+    Setup in PayPal Developer Dashboard:
+    1. My Apps & Credentials -> your app -> Webhooks -> Add Webhook
+    2. URL: https://api.yourdomain.com/webhook/paypal
+    3. Select events: BILLING.SUBSCRIPTION.*
+    4. Copy Webhook ID to env PAYPAL_WEBHOOK_ID
+
+    User email is stored as custom_id on the subscription (set during
+    createSubscription in the frontend SDK call).
+    """
+    body = await request.body()
+    hdrs = dict(request.headers)
+
+    if PAYPAL_WEBHOOK_ID:
+        valid = await paypal_verify_webhook(hdrs, body)
+        if not valid:
+            raise HTTPException(403, "Invalid PayPal webhook signature")
+
+    data = json.loads(body)
+    event_type = data.get("event_type", "")
+    resource = data.get("resource", {})
+
+    subscription_id = resource.get("id", "")
+    # custom_id holds the user's email, set during frontend createSubscription
+    user_email = resource.get("custom_id", "").lower().strip()
+
+    if not user_email:
+        return {"status": "skipped", "reason": "no user email in custom_id"}
+
+    if event_type == "BILLING.SUBSCRIPTION.ACTIVATED":
+        update_user_plan(
+            email=user_email,
+            plan="pro",
+            pp_subscription_id=subscription_id,
+        )
+        return {"status": "upgraded", "email": user_email}
+
+    if event_type in (
+        "BILLING.SUBSCRIPTION.CANCELLED",
+        "BILLING.SUBSCRIPTION.EXPIRED",
+        "BILLING.SUBSCRIPTION.SUSPENDED",
+    ):
+        update_user_plan(email=user_email, plan="free")
+        return {"status": "downgraded", "email": user_email}
+
+    return {"status": "ignored", "event_type": event_type}
+
+
+# ---------------------------------------------------------------------------
 # PayPal helpers
 # ---------------------------------------------------------------------------
 async def paypal_get_access_token() -> str:
@@ -353,6 +414,42 @@ async def paypal_get_subscription(subscription_id: str) -> dict:
         if resp.status_code != 200:
             raise HTTPException(502, f"PayPal subscription fetch failed: {resp.status_code}")
         return resp.json()
+
+
+async def paypal_verify_webhook(
+    headers: dict,
+    body: bytes,
+) -> bool:
+    """
+    Verify PayPal webhook authenticity via PayPal REST API.
+    Requires PAYPAL_WEBHOOK_ID set in env.
+    Docs: https://developer.paypal.com/api/webhooks/v1/#verify-webhook-signature_post
+    """
+    if not PAYPAL_WEBHOOK_ID:
+        return False
+    token = await paypal_get_access_token()
+    webhook_event = json.loads(body)
+    payload = {
+        "auth_algo": headers.get("paypal-auth-algo", ""),
+        "cert_url": headers.get("paypal-cert-url", ""),
+        "transmission_id": headers.get("paypal-transmission-id", ""),
+        "transmission_sig": headers.get("paypal-transmission-sig", ""),
+        "transmission_time": headers.get("paypal-transmission-time", ""),
+        "webhook_id": PAYPAL_WEBHOOK_ID,
+        "webhook_event": webhook_event,
+    }
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.post(
+            f"{PAYPAL_API_BASE}/v1/notifications/verify-webhook-signature",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+        if resp.status_code != 200:
+            return False
+        return resp.json().get("verification_status") == "SUCCESS"
 
 
 # ---------------------------------------------------------------------------
