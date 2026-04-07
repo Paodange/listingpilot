@@ -48,7 +48,9 @@ PAYPAL_CLIENT_ID = os.getenv("PAYPAL_CLIENT_ID", "")
 PAYPAL_CLIENT_SECRET = os.getenv("PAYPAL_CLIENT_SECRET", "")
 PAYPAL_PLAN_ID = os.getenv("PAYPAL_PLAN_ID", "")
 PAYPAL_WEBHOOK_ID = os.getenv("PAYPAL_WEBHOOK_ID", "")
-PAYPAL_API_BASE = "https://api-m.sandbox.paypal.com"  # 上线时换成 https://api-m.paypal.com
+PAYPAL_API_BASE = os.getenv("PAYPAL_API_BASE", "https://api-m.sandbox.paypal.com")
+
+LEMONSQUEEZY_CHECKOUT_URL = os.getenv("LEMONSQUEEZY_CHECKOUT_URL", "")
 
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 
@@ -417,10 +419,9 @@ async def get_config():
             "paypal_plan_id": PAYPAL_PLAN_ID,
         }
     # Default: lemonsqueezy
-    ls_checkout = os.getenv("LEMONSQUEEZY_CHECKOUT_URL", "")
     return {
         "payment_provider": "lemonsqueezy",
-        "checkout_url": ls_checkout,
+        "checkout_url": LEMONSQUEEZY_CHECKOUT_URL,
     }
 
 
