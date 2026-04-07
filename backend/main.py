@@ -41,6 +41,15 @@ FREE_DAILY_LIMIT = int(os.getenv("FREE_DAILY_LIMIT", "3"))
 PRO_DAILY_LIMIT = int(os.getenv("PRO_DAILY_LIMIT", "100"))
 
 LEMONSQUEEZY_WEBHOOK_SECRET = os.getenv("LEMONSQUEEZY_WEBHOOK_SECRET", "")
+
+PAYMENT_PROVIDER = os.getenv("PAYMENT_PROVIDER", "lemonsqueezy")  # "lemonsqueezy" | "paypal"
+
+PAYPAL_CLIENT_ID = os.getenv("PAYPAL_CLIENT_ID", "")
+PAYPAL_CLIENT_SECRET = os.getenv("PAYPAL_CLIENT_SECRET", "")
+PAYPAL_PLAN_ID = os.getenv("PAYPAL_PLAN_ID", "")
+PAYPAL_WEBHOOK_ID = os.getenv("PAYPAL_WEBHOOK_ID", "")
+PAYPAL_API_BASE = "https://api-m.sandbox.paypal.com"  # 上线时换成 https://api-m.paypal.com
+
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 
 ALLOWED_ORIGINS = os.getenv(
@@ -393,6 +402,26 @@ async def generate(req: GenerateRequest, authorization: Optional[str] = Header(N
     remaining = max(daily_limit - new_count, 0)
 
     return GenerateResponse(results=list(results), remaining=remaining)
+
+
+# ---------------------------------------------------------------------------
+# Config (public — used by frontend to determine payment provider)
+# ---------------------------------------------------------------------------
+@app.get("/config")
+async def get_config():
+    """Return active payment provider info for the frontend."""
+    if PAYMENT_PROVIDER == "paypal":
+        return {
+            "payment_provider": "paypal",
+            "paypal_client_id": PAYPAL_CLIENT_ID,
+            "paypal_plan_id": PAYPAL_PLAN_ID,
+        }
+    # Default: lemonsqueezy
+    ls_checkout = os.getenv("LEMONSQUEEZY_CHECKOUT_URL", "")
+    return {
+        "payment_provider": "lemonsqueezy",
+        "checkout_url": ls_checkout,
+    }
 
 
 # ---------------------------------------------------------------------------
