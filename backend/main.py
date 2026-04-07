@@ -140,6 +140,10 @@ class GenerateResponse(BaseModel):
     remaining: int
 
 
+class PayPalCaptureRequest(BaseModel):
+    subscription_id: str
+
+
 # ---------------------------------------------------------------------------
 # Auth Routes
 # ---------------------------------------------------------------------------
@@ -349,6 +353,39 @@ async def paypal_get_subscription(subscription_id: str) -> dict:
         if resp.status_code != 200:
             raise HTTPException(502, f"PayPal subscription fetch failed: {resp.status_code}")
         return resp.json()
+
+
+# ---------------------------------------------------------------------------
+# PayPal Capture (called by frontend after user approves subscription)
+# ---------------------------------------------------------------------------
+@app.post("/paypal/capture")
+async def paypal_capture(
+    req: PayPalCaptureRequest,
+    authorization: Optional[str] = Header(None),
+):
+    """
+    Frontend calls this after PayPal onApprove with the subscriptionID.
+    Backend verifies the subscription with PayPal and upgrades the user to pro.
+
+    Requires user to be logged in (Bearer token).
+    """
+    if not PAYPAL_CLIENT_ID or not PAYPAL_CLIENT_SECRET:
+        raise HTTPException(500, "PayPal not configured")
+
+    user = await get_current_user(authorization)
+
+    sub = await paypal_get_subscription(req.subscription_id)
+    status = sub.get("status", "")
+
+    if status not in ("ACTIVE", "APPROVED"):
+        raise HTTPException(400, f"Subscription not active (status={status})")
+
+    update_user_plan(
+        email=user["email"],
+        plan="pro",
+        pp_subscription_id=req.subscription_id,
+    )
+    return {"status": "upgraded", "plan": "pro"}
 
 
 # ---------------------------------------------------------------------------
