@@ -377,6 +377,11 @@ async def paypal_capture(
     sub = await paypal_get_subscription(req.subscription_id)
     status = sub.get("status", "")
 
+    # Verify the subscription belongs to the authenticated user (conditional: sandbox may omit this)
+    subscriber_email = sub.get("subscriber", {}).get("email_address", "").lower().strip()
+    if subscriber_email and subscriber_email != user["email"]:
+        raise HTTPException(403, "Subscription does not belong to this account")
+
     if status not in ("ACTIVE", "APPROVED"):
         raise HTTPException(400, f"Subscription not active (status={status})")
 
