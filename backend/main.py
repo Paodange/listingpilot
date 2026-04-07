@@ -330,9 +330,12 @@ async def paypal_get_access_token() -> str:
             data={"grant_type": "client_credentials"},
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
-    if resp.status_code != 200:
-        raise HTTPException(502, f"PayPal auth failed: {resp.status_code}")
-    return resp.json()["access_token"]
+        if resp.status_code != 200:
+            raise HTTPException(502, f"PayPal auth failed: {resp.status_code}")
+        token = resp.json().get("access_token")
+        if not token:
+            raise HTTPException(502, "PayPal auth response missing access_token")
+        return token
 
 
 async def paypal_get_subscription(subscription_id: str) -> dict:
@@ -343,9 +346,9 @@ async def paypal_get_subscription(subscription_id: str) -> dict:
             f"{PAYPAL_API_BASE}/v1/billing/subscriptions/{subscription_id}",
             headers={"Authorization": f"Bearer {token}"},
         )
-    if resp.status_code != 200:
-        raise HTTPException(502, f"PayPal subscription fetch failed: {resp.status_code}")
-    return resp.json()
+        if resp.status_code != 200:
+            raise HTTPException(502, f"PayPal subscription fetch failed: {resp.status_code}")
+        return resp.json()
 
 
 # ---------------------------------------------------------------------------
