@@ -7,7 +7,6 @@ const API_BASE = window.location.hostname === "localhost"
   ? "http://localhost:8000"
   : "https://apicore.ntotech.top";  // ← replace with your real API domain
 
-const LEMONSQUEEZY_CHECKOUT = "https://yourstore.lemonsqueezy.com/checkout/buy/your-variant-id"; // ← replace
 
 const GOOGLE_CLIENT_ID = "343640572950-0jokd92mui2lqjqmv2r8rr57vgjdqb2v.apps.googleusercontent.com"; // ← replace
 
@@ -359,6 +358,60 @@ function ResultPanel({ data }) {
 function MainApp({ token, user: initUser, onLogout }) {
   const [user, setUser] = useState(initUser);
   const [usage, setUsage] = useState(null);
+  const [paymentConfig, setPaymentConfig] = useState(null);
+
+  useEffect(() => {
+    api("/config").then(setPaymentConfig).catch(() => {});
+  }, []);
+
+  // Load PayPal SDK when provider is paypal
+  useEffect(() => {
+    if (!paymentConfig || paymentConfig.payment_provider !== "paypal") return;
+    if (document.getElementById("paypal-sdk")) return;
+    const script = document.createElement("script");
+    script.id = "paypal-sdk";
+    script.src = `https://www.paypal.com/sdk/js?client-id=${paymentConfig.paypal_client_id}&vault=true&intent=subscription`;
+    script.async = true;
+    document.head.appendChild(script);
+  }, [paymentConfig]);
+
+  // Render PayPal subscription button
+  useEffect(() => {
+    if (!paymentConfig || paymentConfig.payment_provider !== "paypal") return;
+    if (user.plan !== "free") return;
+    const container = document.getElementById("paypal-upgrade-btn");
+    if (!container) return;
+
+    const tryRender = () => {
+      if (!window.paypal) { setTimeout(tryRender, 300); return; }
+      container.innerHTML = "";
+      window.paypal.Buttons({
+        style: { shape: "rect", color: "blue", layout: "horizontal", label: "subscribe" },
+        createSubscription: (_data, actions) =>
+          actions.subscription.create({
+            plan_id: paymentConfig.paypal_plan_id,
+            custom_id: user.email,
+          }),
+        onApprove: async (data) => {
+          try {
+            await api("/paypal/capture", {
+              method: "POST",
+              token,
+              body: { subscription_id: data.subscriptionID },
+            });
+            await fetchUsage();
+          } catch (e) {
+            alert("PayPal 订阅确认失败：" + e.message);
+          }
+        },
+        onError: (err) => {
+          console.error("PayPal error", err);
+          alert("PayPal 出现错误，请重试");
+        },
+      }).render("#paypal-upgrade-btn");
+    };
+    tryRender();
+  }, [paymentConfig, user.plan, user.email, token, fetchUsage]);
 
   // Form state
   const [productName, setProductName] = useState("");
@@ -407,8 +460,6 @@ function MainApp({ token, user: initUser, onLogout }) {
     }
   };
 
-  const upgradeUrl = `${LEMONSQUEEZY_CHECKOUT}?checkout[custom][user_email]=${encodeURIComponent(user.email)}`;
-
   return (
     <div style={{ minHeight: "100vh", background: "#f0f4f8", fontFamily: font }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Mono:wght@700&display=swap" rel="stylesheet" />
@@ -428,11 +479,20 @@ function MainApp({ token, user: initUser, onLogout }) {
               </span>
             )}
             {user.plan === "free" ? (
-              <a href={upgradeUrl} target="_blank" rel="noopener noreferrer" style={{
-                padding: "7px 16px", fontSize: "13px", fontWeight: 600,
-                background: blue, color: "#fff", border: "none", borderRadius: "8px",
-                textDecoration: "none", fontFamily: font,
-              }}>Upgrade — $7/mo</a>
+              paymentConfig?.payment_provider === "paypal" ? (
+                <div id="paypal-upgrade-btn" style={{ minWidth: "150px" }} />
+              ) : (
+                <a
+                  href={`${paymentConfig?.checkout_url || ""}?checkout[custom][user_email]=${encodeURIComponent(user.email)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    padding: "7px 16px", fontSize: "13px", fontWeight: 600,
+                    background: blue, color: "#fff", border: "none", borderRadius: "8px",
+                    textDecoration: "none", fontFamily: font,
+                  }}
+                >Upgrade — $7/mo</a>
+              )
             ) : (
               <span style={{ fontSize: "12px", color: "#34d399", fontWeight: 600 }}>✦ Pro</span>
             )}
