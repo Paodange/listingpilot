@@ -319,6 +319,36 @@ async def lemonsqueezy_webhook(
 
 
 # ---------------------------------------------------------------------------
+# PayPal helpers
+# ---------------------------------------------------------------------------
+async def paypal_get_access_token() -> str:
+    """Exchange client_id + client_secret for a PayPal access token."""
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.post(
+            f"{PAYPAL_API_BASE}/v1/oauth2/token",
+            auth=(PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET),
+            data={"grant_type": "client_credentials"},
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+    if resp.status_code != 200:
+        raise HTTPException(502, f"PayPal auth failed: {resp.status_code}")
+    return resp.json()["access_token"]
+
+
+async def paypal_get_subscription(subscription_id: str) -> dict:
+    """Fetch subscription details from PayPal REST API."""
+    token = await paypal_get_access_token()
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.get(
+            f"{PAYPAL_API_BASE}/v1/billing/subscriptions/{subscription_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    if resp.status_code != 200:
+        raise HTTPException(502, f"PayPal subscription fetch failed: {resp.status_code}")
+    return resp.json()
+
+
+# ---------------------------------------------------------------------------
 # DeepSeek API
 # ---------------------------------------------------------------------------
 async def call_deepseek(system_prompt: str, user_prompt: str) -> dict:
