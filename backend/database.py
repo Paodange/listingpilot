@@ -32,14 +32,15 @@ def init_db():
     with get_db() as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                email       TEXT UNIQUE NOT NULL,
-                password    TEXT NOT NULL,
-                plan        TEXT NOT NULL DEFAULT 'free',
-                ls_customer_id   TEXT DEFAULT '',
-                ls_subscription_id TEXT DEFAULT '',
-                created_at  REAL NOT NULL,
-                updated_at  REAL NOT NULL
+                id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+                email                TEXT UNIQUE NOT NULL,
+                password             TEXT NOT NULL,
+                plan                 TEXT NOT NULL DEFAULT 'free',
+                ls_customer_id       TEXT DEFAULT '',
+                ls_subscription_id   TEXT DEFAULT '',
+                pp_subscription_id   TEXT DEFAULT '',
+                created_at           REAL NOT NULL,
+                updated_at           REAL NOT NULL
             )
         """)
         conn.execute("""
@@ -52,6 +53,10 @@ def init_db():
                 FOREIGN KEY(user_id) REFERENCES users(id)
             )
         """)
+        # Migrate: add pp_subscription_id if missing (safe to run on existing DB)
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
+        if "pp_subscription_id" not in cols:
+            conn.execute("ALTER TABLE users ADD COLUMN pp_subscription_id TEXT DEFAULT ''")
 
 
 # ----- User CRUD -----
@@ -82,12 +87,21 @@ def get_user_by_id(user_id: int) -> dict | None:
         return dict(row) if row else None
 
 
-def update_user_plan(email: str, plan: str, ls_customer_id: str = "", ls_subscription_id: str = ""):
+def update_user_plan(
+    email: str,
+    plan: str,
+    ls_customer_id: str = "",
+    ls_subscription_id: str = "",
+    pp_subscription_id: str = "",
+):
     now = time.time()
     with get_db() as conn:
         conn.execute(
-            "UPDATE users SET plan=?, ls_customer_id=?, ls_subscription_id=?, updated_at=? WHERE email=?",
-            (plan, ls_customer_id, ls_subscription_id, now, email),
+            """UPDATE users
+               SET plan=?, ls_customer_id=?, ls_subscription_id=?,
+                   pp_subscription_id=?, updated_at=?
+               WHERE email=?""",
+            (plan, ls_customer_id, ls_subscription_id, pp_subscription_id, now, email),
         )
 
 
