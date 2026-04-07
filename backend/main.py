@@ -323,67 +323,6 @@ async def lemonsqueezy_webhook(
 
 
 # ---------------------------------------------------------------------------
-# PayPal Webhook
-# ---------------------------------------------------------------------------
-@app.post("/webhook/paypal")
-async def paypal_webhook(request: Request):
-    """
-    Handle PayPal subscription lifecycle events.
-
-    Events handled:
-    - BILLING.SUBSCRIPTION.ACTIVATED   -> upgrade to pro
-    - BILLING.SUBSCRIPTION.CANCELLED   -> downgrade to free
-    - BILLING.SUBSCRIPTION.EXPIRED     -> downgrade to free
-    - BILLING.SUBSCRIPTION.SUSPENDED   -> downgrade to free
-
-    Setup in PayPal Developer Dashboard:
-    1. My Apps & Credentials -> your app -> Webhooks -> Add Webhook
-    2. URL: https://api.yourdomain.com/webhook/paypal
-    3. Select events: BILLING.SUBSCRIPTION.*
-    4. Copy Webhook ID to env PAYPAL_WEBHOOK_ID
-
-    User email is stored as custom_id on the subscription (set during
-    createSubscription in the frontend SDK call).
-    """
-    body = await request.body()
-    hdrs = dict(request.headers)
-
-    if PAYPAL_WEBHOOK_ID:
-        valid = await paypal_verify_webhook(hdrs, body)
-        if not valid:
-            raise HTTPException(403, "Invalid PayPal webhook signature")
-
-    data = json.loads(body)
-    event_type = data.get("event_type", "")
-    resource = data.get("resource", {})
-
-    subscription_id = resource.get("id", "")
-    # custom_id holds the user's email, set during frontend createSubscription
-    user_email = resource.get("custom_id", "").lower().strip()
-
-    if not user_email:
-        return {"status": "skipped", "reason": "no user email in custom_id"}
-
-    if event_type == "BILLING.SUBSCRIPTION.ACTIVATED":
-        update_user_plan(
-            email=user_email,
-            plan="pro",
-            pp_subscription_id=subscription_id,
-        )
-        return {"status": "upgraded", "email": user_email}
-
-    if event_type in (
-        "BILLING.SUBSCRIPTION.CANCELLED",
-        "BILLING.SUBSCRIPTION.EXPIRED",
-        "BILLING.SUBSCRIPTION.SUSPENDED",
-    ):
-        update_user_plan(email=user_email, plan="free")
-        return {"status": "downgraded", "email": user_email}
-
-    return {"status": "ignored", "event_type": event_type}
-
-
-# ---------------------------------------------------------------------------
 # PayPal helpers
 # ---------------------------------------------------------------------------
 async def paypal_get_access_token() -> str:
@@ -419,6 +358,7 @@ async def paypal_get_subscription(subscription_id: str) -> dict:
 async def paypal_verify_webhook(
     headers: dict,
     body: bytes,
+    webhook_event: dict,
 ) -> bool:
     """
     Verify PayPal webhook authenticity via PayPal REST API.
@@ -428,7 +368,6 @@ async def paypal_verify_webhook(
     if not PAYPAL_WEBHOOK_ID:
         return False
     token = await paypal_get_access_token()
-    webhook_event = json.loads(body)
     payload = {
         "auth_algo": headers.get("paypal-auth-algo", ""),
         "cert_url": headers.get("paypal-cert-url", ""),
@@ -450,6 +389,70 @@ async def paypal_verify_webhook(
         if resp.status_code != 200:
             return False
         return resp.json().get("verification_status") == "SUCCESS"
+
+
+# ---------------------------------------------------------------------------
+# PayPal Webhook
+# ---------------------------------------------------------------------------
+@app.post("/webhook/paypal")
+async def paypal_webhook(request: Request):
+    """
+    Handle PayPal subscription lifecycle events.
+
+    Events handled:
+    - BILLING.SUBSCRIPTION.ACTIVATED   -> upgrade to pro
+    - BILLING.SUBSCRIPTION.CANCELLED   -> downgrade to free
+    - BILLING.SUBSCRIPTION.EXPIRED     -> downgrade to free
+    - BILLING.SUBSCRIPTION.SUSPENDED   -> downgrade to free
+
+    Setup in PayPal Developer Dashboard:
+    1. My Apps & Credentials -> your app -> Webhooks -> Add Webhook
+    2. URL: https://api.yourdomain.com/webhook/paypal
+    3. Select events: BILLING.SUBSCRIPTION.*
+    4. Copy Webhook ID to env PAYPAL_WEBHOOK_ID
+
+    User email is stored as custom_id on the subscription (set during
+    createSubscription in the frontend SDK call).
+    """
+    body = await request.body()
+    hdrs = dict(request.headers)
+    data = json.loads(body)
+
+    if PAYPAL_WEBHOOK_ID:
+        valid = await paypal_verify_webhook(hdrs, body, data)
+        if not valid:
+            raise HTTPException(403, "Invalid PayPal webhook signature")
+
+    event_type = data.get("event_type", "")
+    resource = data.get("resource", {})
+
+    subscription_id = resource.get("id", "")
+    # custom_id holds the user's email, set during frontend createSubscription
+    user_email = resource.get("custom_id", "").lower().strip()
+
+    if not user_email:
+        return {"status": "skipped", "reason": "no user email in custom_id"}
+
+    if not get_user_by_email(user_email):
+        return {"status": "skipped", "reason": "user not found"}
+
+    if event_type == "BILLING.SUBSCRIPTION.ACTIVATED":
+        update_user_plan(
+            email=user_email,
+            plan="pro",
+            pp_subscription_id=subscription_id,
+        )
+        return {"status": "upgraded", "email": user_email}
+
+    if event_type in (
+        "BILLING.SUBSCRIPTION.CANCELLED",
+        "BILLING.SUBSCRIPTION.EXPIRED",
+        "BILLING.SUBSCRIPTION.SUSPENDED",
+    ):
+        update_user_plan(email=user_email, plan="free")
+        return {"status": "downgraded", "email": user_email}
+
+    return {"status": "ignored", "event_type": event_type}
 
 
 # ---------------------------------------------------------------------------
