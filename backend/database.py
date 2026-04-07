@@ -90,18 +90,27 @@ def get_user_by_id(user_id: int) -> dict | None:
 def update_user_plan(
     email: str,
     plan: str,
-    ls_customer_id: str = "",
-    ls_subscription_id: str = "",
-    pp_subscription_id: str = "",
+    ls_customer_id: str | None = None,
+    ls_subscription_id: str | None = None,
+    pp_subscription_id: str | None = None,
 ):
     now = time.time()
+    fields = ["plan=?", "updated_at=?"]
+    values: list = [plan, now]
+    if ls_customer_id is not None:
+        fields.insert(1, "ls_customer_id=?")
+        values.insert(1, ls_customer_id)
+    if ls_subscription_id is not None:
+        fields.insert(2, "ls_subscription_id=?")
+        values.insert(2, ls_subscription_id)
+    if pp_subscription_id is not None:
+        fields.insert(3, "pp_subscription_id=?")
+        values.insert(3, pp_subscription_id)
+    values.append(email)
     with get_db() as conn:
         conn.execute(
-            """UPDATE users
-               SET plan=?, ls_customer_id=?, ls_subscription_id=?,
-                   pp_subscription_id=?, updated_at=?
-               WHERE email=?""",
-            (plan, ls_customer_id, ls_subscription_id, pp_subscription_id, now, email),
+            f"UPDATE users SET {', '.join(fields)} WHERE email=?",
+            values,
         )
 
 
