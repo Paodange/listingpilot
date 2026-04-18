@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p /c/Project/listingpolit/docs/superpowers/plans)",
+      "Bash(mkdir -p /c/Project/listingpolit/docs/superpowers/specs)",
+      "Bash(python -c \"from database import init_db; init_db\\(\\); print\\('OK'\\)\")",
+      "Bash(python -c ':*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
+    ]
+  }
+}

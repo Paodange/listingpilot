@@ -42,7 +42,7 @@ PRO_DAILY_LIMIT = int(os.getenv("PRO_DAILY_LIMIT", "100"))
 
 LEMONSQUEEZY_WEBHOOK_SECRET = os.getenv("LEMONSQUEEZY_WEBHOOK_SECRET", "")
 
-PAYMENT_PROVIDER = os.getenv("PAYMENT_PROVIDER", "lemonsqueezy")  # "lemonsqueezy" | "paypal"
+PAYMENT_PROVIDER = os.getenv("PAYMENT_PROVIDER", "paypal")  # "lemonsqueezy" | "paypal"
 
 PAYPAL_CLIENT_ID = os.getenv("PAYPAL_CLIENT_ID", "")
 PAYPAL_CLIENT_SECRET = os.getenv("PAYPAL_CLIENT_SECRET", "")

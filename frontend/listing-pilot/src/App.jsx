@@ -364,9 +364,21 @@ function MainApp({ token, user: initUser, onLogout }) {
     api("/config").then(setPaymentConfig).catch(() => {});
   }, []);
 
+  // Fetch usage on mount
+  const fetchUsage = useCallback(async () => {
+    try {
+      const data = await api("/auth/me", { token });
+      setUser({ id: data.id, email: data.email, plan: data.plan });
+      setUsage(data.usage);
+    } catch { /* ignore */ }
+  }, [token]);
+
+  useEffect(() => { fetchUsage(); }, [fetchUsage]);
+
   // Load PayPal SDK when provider is paypal
   useEffect(() => {
     if (!paymentConfig || paymentConfig.payment_provider !== "paypal") return;
+    if (!paymentConfig.paypal_client_id) return;
     if (document.getElementById("paypal-sdk")) return;
     const script = document.createElement("script");
     script.id = "paypal-sdk";
@@ -382,8 +394,12 @@ function MainApp({ token, user: initUser, onLogout }) {
     const container = document.getElementById("paypal-upgrade-btn");
     if (!container) return;
 
+    let cancelled = false;
+    let timerId;
+
     const tryRender = () => {
-      if (!window.paypal) { setTimeout(tryRender, 300); return; }
+      if (cancelled) return;
+      if (!window.paypal) { timerId = setTimeout(tryRender, 300); return; }
       container.innerHTML = "";
       window.paypal.Buttons({
         style: { shape: "rect", color: "blue", layout: "horizontal", label: "subscribe" },
@@ -411,6 +427,11 @@ function MainApp({ token, user: initUser, onLogout }) {
       }).render("#paypal-upgrade-btn");
     };
     tryRender();
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timerId);
+    };
   }, [paymentConfig, user.plan, user.email, token, fetchUsage]);
 
   // Form state
@@ -425,17 +446,6 @@ function MainApp({ token, user: initUser, onLogout }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState("amazon");
-
-  // Fetch usage on mount
-  const fetchUsage = useCallback(async () => {
-    try {
-      const data = await api("/auth/me", { token });
-      setUser({ id: data.id, email: data.email, plan: data.plan });
-      setUsage(data.usage);
-    } catch { /* ignore */ }
-  }, [token]);
-
-  useEffect(() => { fetchUsage(); }, [fetchUsage]);
 
   const togglePlatform = (id) => {
     setSelectedPlatforms(prev =>
@@ -478,12 +488,14 @@ function MainApp({ token, user: initUser, onLogout }) {
                 {usage.remaining}/{usage.limit} left today
               </span>
             )}
-            {user.plan === "free" ? (
-              paymentConfig?.payment_provider === "paypal" ? (
+            {user.plan !== "free" ? (
+              <span style={{ fontSize: "12px", color: "#34d399", fontWeight: 600 }}>✦ Pro</span>
+            ) : paymentConfig ? (
+              paymentConfig.payment_provider === "paypal" ? (
                 <div id="paypal-upgrade-btn" style={{ minWidth: "150px" }} />
               ) : (
                 <a
-                  href={`${paymentConfig?.checkout_url || ""}?checkout[custom][user_email]=${encodeURIComponent(user.email)}`}
+                  href={`${paymentConfig.checkout_url}?checkout[custom][user_email]=${encodeURIComponent(user.email)}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   style={{
@@ -493,9 +505,7 @@ function MainApp({ token, user: initUser, onLogout }) {
                   }}
                 >Upgrade — $7/mo</a>
               )
-            ) : (
-              <span style={{ fontSize: "12px", color: "#34d399", fontWeight: 600 }}>✦ Pro</span>
-            )}
+            ) : null}
             <span style={{ fontSize: "12px", color: "#64748b" }}>{user.email}</span>
             <button onClick={onLogout} style={{
               padding: "7px 14px", fontSize: "12px", background: "transparent",
