@@ -28,7 +28,7 @@ def get_db():
 
 
 def init_db():
-    """Create tables if they don't exist."""
+    """Create tables if they don't exist, and run safe migrations."""
     with get_db() as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
@@ -36,9 +36,7 @@ def init_db():
                 email                TEXT UNIQUE NOT NULL,
                 password             TEXT NOT NULL,
                 plan                 TEXT NOT NULL DEFAULT 'free',
-                ls_customer_id       TEXT DEFAULT '',
-                ls_subscription_id   TEXT DEFAULT '',
-                pp_subscription_id   TEXT DEFAULT '',
+                dp_subscription_id   TEXT DEFAULT '',
                 created_at           REAL NOT NULL,
                 updated_at           REAL NOT NULL
             )
@@ -53,10 +51,10 @@ def init_db():
                 FOREIGN KEY(user_id) REFERENCES users(id)
             )
         """)
-        # Migrate: add pp_subscription_id if missing (safe to run on existing DB)
+        # Migrations for existing databases
         cols = [r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
-        if "pp_subscription_id" not in cols:
-            conn.execute("ALTER TABLE users ADD COLUMN pp_subscription_id TEXT DEFAULT ''")
+        if "dp_subscription_id" not in cols:
+            conn.execute("ALTER TABLE users ADD COLUMN dp_subscription_id TEXT DEFAULT ''")
 
 
 # ----- User CRUD -----
@@ -90,22 +88,14 @@ def get_user_by_id(user_id: int) -> dict | None:
 def update_user_plan(
     email: str,
     plan: str,
-    ls_customer_id: str | None = None,
-    ls_subscription_id: str | None = None,
-    pp_subscription_id: str | None = None,
+    dp_subscription_id: str | None = None,
 ):
     now = time.time()
     fields = ["plan=?", "updated_at=?"]
     values: list = [plan, now]
-    if ls_customer_id is not None:
-        fields.insert(1, "ls_customer_id=?")
-        values.insert(1, ls_customer_id)
-    if ls_subscription_id is not None:
-        fields.insert(2, "ls_subscription_id=?")
-        values.insert(2, ls_subscription_id)
-    if pp_subscription_id is not None:
-        fields.insert(3, "pp_subscription_id=?")
-        values.insert(3, pp_subscription_id)
+    if dp_subscription_id is not None:
+        fields.insert(1, "dp_subscription_id=?")
+        values.insert(1, dp_subscription_id)
     values.append(email)
     with get_db() as conn:
         conn.execute(

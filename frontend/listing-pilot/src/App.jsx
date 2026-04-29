@@ -375,64 +375,6 @@ function MainApp({ token, user: initUser, onLogout }) {
 
   useEffect(() => { fetchUsage(); }, [fetchUsage]);
 
-  // Load PayPal SDK when provider is paypal
-  useEffect(() => {
-    if (!paymentConfig || paymentConfig.payment_provider !== "paypal") return;
-    if (!paymentConfig.paypal_client_id) return;
-    if (document.getElementById("paypal-sdk")) return;
-    const script = document.createElement("script");
-    script.id = "paypal-sdk";
-    script.src = `https://www.paypal.com/sdk/js?client-id=${paymentConfig.paypal_client_id}&vault=true&intent=subscription`;
-    script.async = true;
-    document.head.appendChild(script);
-  }, [paymentConfig]);
-
-  // Render PayPal subscription button
-  useEffect(() => {
-    if (!paymentConfig || paymentConfig.payment_provider !== "paypal") return;
-    if (user.plan !== "free") return;
-    const container = document.getElementById("paypal-upgrade-btn");
-    if (!container) return;
-
-    let cancelled = false;
-    let timerId;
-
-    const tryRender = () => {
-      if (cancelled) return;
-      if (!window.paypal) { timerId = setTimeout(tryRender, 300); return; }
-      container.innerHTML = "";
-      window.paypal.Buttons({
-        style: { shape: "rect", color: "blue", layout: "horizontal", label: "subscribe" },
-        createSubscription: (_data, actions) =>
-          actions.subscription.create({
-            plan_id: paymentConfig.paypal_plan_id,
-            custom_id: user.email,
-          }),
-        onApprove: async (data) => {
-          try {
-            await api("/paypal/capture", {
-              method: "POST",
-              token,
-              body: { subscription_id: data.subscriptionID },
-            });
-            await fetchUsage();
-          } catch (e) {
-            alert("PayPal 订阅确认失败：" + e.message);
-          }
-        },
-        onError: (err) => {
-          console.error("PayPal error", err);
-          alert("PayPal 出现错误，请重试");
-        },
-      }).render("#paypal-upgrade-btn");
-    };
-    tryRender();
-
-    return () => {
-      cancelled = true;
-      clearTimeout(timerId);
-    };
-  }, [paymentConfig, user.plan, user.email, token, fetchUsage]);
 
   // Form state
   const [productName, setProductName] = useState("");
@@ -490,21 +432,17 @@ function MainApp({ token, user: initUser, onLogout }) {
             )}
             {user.plan !== "free" ? (
               <span style={{ fontSize: "12px", color: "#34d399", fontWeight: 600 }}>✦ Pro</span>
-            ) : paymentConfig ? (
-              paymentConfig.payment_provider === "paypal" ? (
-                <div id="paypal-upgrade-btn" style={{ minWidth: "150px" }} />
-              ) : (
-                <a
-                  href={`${paymentConfig.checkout_url}?checkout[custom][user_email]=${encodeURIComponent(user.email)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{
-                    padding: "7px 16px", fontSize: "13px", fontWeight: 600,
-                    background: blue, color: "#fff", border: "none", borderRadius: "8px",
-                    textDecoration: "none", fontFamily: font,
-                  }}
-                >Upgrade — $7/mo</a>
-              )
+            ) : paymentConfig?.checkout_url ? (
+              <a
+                href={`${paymentConfig.checkout_url}?customer_email=${encodeURIComponent(user.email)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  padding: "7px 16px", fontSize: "13px", fontWeight: 600,
+                  background: blue, color: "#fff", border: "none", borderRadius: "8px",
+                  textDecoration: "none", fontFamily: font,
+                }}
+              >Upgrade — $5/mo</a>
             ) : null}
             <span style={{ fontSize: "12px", color: "#64748b" }}>{user.email}</span>
             <button onClick={onLogout} style={{

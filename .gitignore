@@ -4,10 +4,13 @@ __pycache__/
 *$py.class
 *.pyo
 
-# Virtual environment
+# Virtual environment (uv manages .venv inside backend/)
 .venv/
 venv/
 env/
+
+# uv — commit uv.lock, ignore cache
+.uv-cache/
 
 # Distribution / packaging
 build/

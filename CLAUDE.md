@@ -4,22 +4,21 @@
 
 ## 项目概述
 
-**ListingPilot** — 一个全栈 SaaS 应用，使用 DeepSeek AI API 生成电商平台产品列表（Amazon、Shopify、Etsy、eBay）。用户注册/登录后，提交产品信息，即可获得针对各平台优化的产品描述。付费套餐（通过 LemonSqueezy）可解锁更高的每日生成次数上限。
+**ListingPilot** — 一个全栈 SaaS 应用，使用 DeepSeek AI API 生成电商平台产品列表（Amazon、Shopify、Etsy、eBay）。用户注册/登录后，提交产品信息，即可获得针对各平台优化的产品描述。付费套餐（通过 DodoPayments，$5/月）可解锁更高的每日生成次数上限。
 
 ## 常用命令
 
 ### 后端（Python/FastAPI）
 
 ```bash
-# 在项目根目录 — 先激活虚拟环境
-source .venv/Scripts/activate   # Windows Git Bash
-# 或
-.venv\Scripts\activate           # Windows CMD/PowerShell
-
+# 使用 uv 管理依赖（无需手动激活虚拟环境）
 cd backend
-pip install -r requirements.txt  # 安装依赖
 
-python main.py                   # 在 8000 端口启动服务
+uv sync                   # 安装/同步依赖（首次或 pyproject.toml 变更后运行）
+uv run python main.py     # 启动服务（8000 端口）
+
+# 添加新依赖
+uv add <package>          # 自动更新 pyproject.toml 和 uv.lock
 ```
 
 ### 前端（React/Vite）

@@ -1,34 +1,34 @@
 """
 Authentication utilities: JWT tokens + password hashing.
-Uses hashlib + salt (no bcrypt dependency issues).
 """
 
-import hashlib
 import os
-import secrets
 import time
 
+import bcrypt
 import jwt
+from dotenv import load_dotenv
 
-SECRET_KEY = os.getenv("JWT_SECRET", "change-me-to-a-random-string")
+load_dotenv()
+
+SECRET_KEY = os.getenv("JWT_SECRET", "")
+if not SECRET_KEY or SECRET_KEY == "change-me-to-a-random-string":
+    raise RuntimeError(
+        "JWT_SECRET is not configured. Set a strong random string in backend/.env"
+    )
+
 ALGORITHM = "HS256"
 TOKEN_EXPIRE_HOURS = int(os.getenv("TOKEN_EXPIRE_HOURS", "72"))
 
 
 def hash_password(password: str) -> str:
-    """Hash password with random salt using SHA-256."""
-    salt = secrets.token_hex(16)
-    h = hashlib.sha256((salt + password).encode()).hexdigest()
-    return f"{salt}${h}"
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    """Verify password against stored hash."""
     try:
-        salt, stored_hash = hashed.split("$", 1)
-        h = hashlib.sha256((salt + plain).encode()).hexdigest()
-        return secrets.compare_digest(h, stored_hash)
-    except (ValueError, AttributeError):
+        return bcrypt.checkpw(plain.encode(), hashed.encode())
+    except Exception:
         return False
 
 

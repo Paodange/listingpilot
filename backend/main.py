@@ -1,10 +1,10 @@
 """
 ListingPilot Backend
-AI-powered e-commerce listing generator.
-With user management + LemonSqueezy payment integration.
+AI-powered e-commerce listing generator with DodoPayments subscription support.
 """
 
 import asyncio
+import base64
 import hashlib
 import hmac
 import json
@@ -40,29 +40,22 @@ DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 FREE_DAILY_LIMIT = int(os.getenv("FREE_DAILY_LIMIT", "3"))
 PRO_DAILY_LIMIT = int(os.getenv("PRO_DAILY_LIMIT", "100"))
 
-LEMONSQUEEZY_WEBHOOK_SECRET = os.getenv("LEMONSQUEEZY_WEBHOOK_SECRET", "")
-
-PAYMENT_PROVIDER = os.getenv("PAYMENT_PROVIDER", "paypal")  # "lemonsqueezy" | "paypal"
-
-PAYPAL_CLIENT_ID = os.getenv("PAYPAL_CLIENT_ID", "")
-PAYPAL_CLIENT_SECRET = os.getenv("PAYPAL_CLIENT_SECRET", "")
-PAYPAL_PLAN_ID = os.getenv("PAYPAL_PLAN_ID", "")
-PAYPAL_WEBHOOK_ID = os.getenv("PAYPAL_WEBHOOK_ID", "")
-PAYPAL_API_BASE = os.getenv("PAYPAL_API_BASE", "https://api-m.sandbox.paypal.com")
-
-LEMONSQUEEZY_CHECKOUT_URL = os.getenv("LEMONSQUEEZY_CHECKOUT_URL", "")
-
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+
+# DodoPayments
+DODOPAYMENTS_API_KEY       = os.getenv("DODOPAYMENTS_API_KEY", "")
+DODOPAYMENTS_WEBHOOK_SECRET = os.getenv("DODOPAYMENTS_WEBHOOK_SECRET", "")
+DODOPAYMENTS_CHECKOUT_URL  = os.getenv("DODOPAYMENTS_CHECKOUT_URL", "")  # payment link from dashboard
 
 ALLOWED_ORIGINS = os.getenv(
     "ALLOWED_ORIGINS",
-    "http://localhost:3000,http://localhost:5173,https://your-app.vercel.app",
+    "http://localhost:3000,http://localhost:5173,https://cc.ntotech.top",
 ).split(",")
 
 # ---------------------------------------------------------------------------
 # App
 # ---------------------------------------------------------------------------
-app = FastAPI(title="ListingPilot API", version="0.2.0")
+app = FastAPI(title="ListingPilot API", version="0.3.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -77,15 +70,12 @@ app.add_middleware(
 # Auth dependency
 # ---------------------------------------------------------------------------
 async def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
-    """Extract and validate user from Bearer token."""
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(401, "Missing or invalid Authorization header")
-
     token = authorization.split(" ", 1)[1]
     payload = decode_token(token)
     if not payload:
         raise HTTPException(401, "Token expired or invalid")
-
     user = get_user_by_id(payload["sub"])
     if not user:
         raise HTTPException(401, "User not found")
@@ -106,7 +96,7 @@ class LoginRequest(BaseModel):
 
 
 class GoogleLoginRequest(BaseModel):
-    credential: str  # Google ID token from frontend
+    credential: str
 
 
 class AuthResponse(BaseModel):
@@ -140,25 +130,18 @@ class GenerateResponse(BaseModel):
     remaining: int
 
 
-class PayPalCaptureRequest(BaseModel):
-    subscription_id: str
-
-
 # ---------------------------------------------------------------------------
 # Auth Routes
 # ---------------------------------------------------------------------------
 @app.post("/auth/register", response_model=AuthResponse)
 async def register(req: RegisterRequest):
-    """Register a new user."""
     email = req.email.lower().strip()
     if get_user_by_email(email):
         raise HTTPException(409, "Email already registered")
-
     hashed = hash_password(req.password)
     user = create_user(email, hashed)
     if not user:
         raise HTTPException(500, "Failed to create user")
-
     token = create_token(user["id"], user["email"])
     return AuthResponse(
         token=token,
@@ -168,12 +151,10 @@ async def register(req: RegisterRequest):
 
 @app.post("/auth/login", response_model=AuthResponse)
 async def login(req: LoginRequest):
-    """Login with email and password."""
     email = req.email.lower().strip()
     user = get_user_by_email(email)
     if not user or not verify_password(req.password, user["password"]):
         raise HTTPException(401, "Invalid email or password")
-
     token = create_token(user["id"], user["email"])
     return AuthResponse(
         token=token,
@@ -183,7 +164,6 @@ async def login(req: LoginRequest):
 
 @app.get("/auth/me")
 async def get_me(authorization: Optional[str] = Header(None)):
-    """Get current user info and usage."""
     user = await get_current_user(authorization)
     daily_limit = PRO_DAILY_LIMIT if user["plan"] == "pro" else FREE_DAILY_LIMIT
     used = get_daily_usage(user["id"])
@@ -201,26 +181,17 @@ async def get_me(authorization: Optional[str] = Header(None)):
 
 @app.post("/auth/google", response_model=AuthResponse)
 async def google_login(req: GoogleLoginRequest):
-    """
-    Login or register with Google.
-    Frontend sends the credential (ID token) from Google Sign-In.
-    Backend verifies it with Google and creates/finds the user.
-    """
     if not GOOGLE_CLIENT_ID:
         raise HTTPException(500, "Google login not configured")
 
-    # Verify the Google ID token
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.get(
             f"https://oauth2.googleapis.com/tokeninfo?id_token={req.credential}"
         )
-
     if resp.status_code != 200:
         raise HTTPException(401, "Invalid Google token")
 
     google_data = resp.json()
-
-    # Verify the token was issued for our app
     if google_data.get("aud") != GOOGLE_CLIENT_ID:
         raise HTTPException(401, "Token not issued for this application")
 
@@ -228,10 +199,8 @@ async def google_login(req: GoogleLoginRequest):
     if not email:
         raise HTTPException(401, "No email in Google token")
 
-    # Find or create user
     user = get_user_by_email(email)
     if not user:
-        # Create user with a random password (they'll use Google to login)
         random_pw = hash_password(os.urandom(32).hex())
         user = create_user(email, random_pw)
         if not user:
@@ -245,252 +214,106 @@ async def google_login(req: GoogleLoginRequest):
 
 
 # ---------------------------------------------------------------------------
-# LemonSqueezy Webhook
+# DodoPayments Webhook
 # ---------------------------------------------------------------------------
-def verify_ls_signature(payload: bytes, signature: str) -> bool:
-    """Verify LemonSqueezy webhook signature."""
-    if not LEMONSQUEEZY_WEBHOOK_SECRET:
-        return False
-    expected = hmac.new(
-        LEMONSQUEEZY_WEBHOOK_SECRET.encode(),
-        payload,
-        hashlib.sha256,
-    ).hexdigest()
-    return hmac.compare_digest(expected, signature)
-
-
-@app.post("/webhook/lemonsqueezy")
-async def lemonsqueezy_webhook(
-    request: Request,
-    x_signature: Optional[str] = Header(None, alias="x-signature"),
-):
-    """
-    Handle LemonSqueezy subscription events.
-
-    Events:
-    - subscription_created  -> upgrade to pro
-    - subscription_updated  -> check status, upgrade or downgrade
-    - subscription_cancelled / subscription_expired -> downgrade to free
-
-    Setup in LemonSqueezy dashboard:
-    1. Go to Settings -> Webhooks -> Add Endpoint
-    2. URL: https://api.yourdomain.com/webhook/lemonsqueezy
-    3. Select events: subscription_created, subscription_updated,
-       subscription_cancelled, subscription_expired
-    4. Copy signing secret to .env LEMONSQUEEZY_WEBHOOK_SECRET
-
-    When creating checkout link, pass user email as custom data:
-    https://yourstore.lemonsqueezy.com/checkout/buy/xxx?checkout[custom][user_email]=user@example.com
-    """
-    body = await request.body()
-
-    # Verify signature in production
-    if LEMONSQUEEZY_WEBHOOK_SECRET:
-        if not x_signature or not verify_ls_signature(body, x_signature):
-            raise HTTPException(403, "Invalid signature")
-
-    data = json.loads(body)
-    event_name = data.get("meta", {}).get("event_name", "")
-    attrs = data.get("data", {}).get("attributes", {})
-
-    # Get user email from custom data (passed during checkout)
-    custom = data.get("meta", {}).get("custom_data", {})
-    user_email = custom.get("user_email", "").lower().strip()
-
-    if not user_email:
-        user_email = attrs.get("user_email", "").lower().strip()
-
-    if not user_email:
-        return {"status": "skipped", "reason": "no user_email"}
-
-    customer_id = str(data.get("data", {}).get("id", ""))
-    subscription_id = str(attrs.get("subscription_id", attrs.get("id", "")))
-    status = attrs.get("status", "")
-
-    if event_name in ("subscription_created", "subscription_updated"):
-        if status in ("active", "on_trial"):
-            update_user_plan(user_email, "pro", customer_id, subscription_id)
-            return {"status": "upgraded", "email": user_email}
-        if status in ("cancelled", "expired", "past_due", "unpaid"):
-            update_user_plan(user_email, "free", customer_id, subscription_id)
-            return {"status": "downgraded", "email": user_email}
-
-    elif event_name in ("subscription_cancelled", "subscription_expired"):
-        update_user_plan(user_email, "free", customer_id, subscription_id)
-        return {"status": "downgraded", "email": user_email}
-
-    return {"status": "ignored", "event": event_name}
-
-
-# ---------------------------------------------------------------------------
-# PayPal helpers
-# ---------------------------------------------------------------------------
-async def paypal_get_access_token() -> str:
-    """Exchange client_id + client_secret for a PayPal access token."""
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        resp = await client.post(
-            f"{PAYPAL_API_BASE}/v1/oauth2/token",
-            auth=(PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET),
-            data={"grant_type": "client_credentials"},
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
-        if resp.status_code != 200:
-            raise HTTPException(502, f"PayPal auth failed: {resp.status_code}")
-        token = resp.json().get("access_token")
-        if not token:
-            raise HTTPException(502, "PayPal auth response missing access_token")
-        return token
-
-
-async def paypal_get_subscription(subscription_id: str) -> dict:
-    """Fetch subscription details from PayPal REST API."""
-    token = await paypal_get_access_token()
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        resp = await client.get(
-            f"{PAYPAL_API_BASE}/v1/billing/subscriptions/{subscription_id}",
-            headers={"Authorization": f"Bearer {token}"},
-        )
-        if resp.status_code != 200:
-            raise HTTPException(502, f"PayPal subscription fetch failed: {resp.status_code}")
-        return resp.json()
-
-
-async def paypal_verify_webhook(
-    headers: dict,
-    body: bytes,
-    webhook_event: dict,
+def _verify_dodo_signature(
+    payload: bytes,
+    webhook_id: str,
+    webhook_timestamp: str,
+    webhook_signature: str,
+    secret: str,
 ) -> bool:
     """
-    Verify PayPal webhook authenticity via PayPal REST API.
-    Requires PAYPAL_WEBHOOK_ID set in env.
-    Docs: https://developer.paypal.com/api/webhooks/v1/#verify-webhook-signature_post
+    Verify DodoPayments webhook using Svix-style HMAC-SHA256.
+    Signature header format: "v1,<base64(hmac)>" (space-separated for multiple)
+    Secret is base64-encoded (strip "whsec_" prefix if present).
     """
-    if not PAYPAL_WEBHOOK_ID:
-        return False
-    token = await paypal_get_access_token()
-    payload = {
-        "auth_algo": headers.get("paypal-auth-algo", ""),
-        "cert_url": headers.get("paypal-cert-url", ""),
-        "transmission_id": headers.get("paypal-transmission-id", ""),
-        "transmission_sig": headers.get("paypal-transmission-sig", ""),
-        "transmission_time": headers.get("paypal-transmission-time", ""),
-        "webhook_id": PAYPAL_WEBHOOK_ID,
-        "webhook_event": webhook_event,
-    }
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        resp = await client.post(
-            f"{PAYPAL_API_BASE}/v1/notifications/verify-webhook-signature",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-        )
-        if resp.status_code != 200:
-            return False
-        return resp.json().get("verification_status") == "SUCCESS"
+    raw_secret = secret.removeprefix("whsec_")
+    try:
+        key_bytes = base64.b64decode(raw_secret)
+    except Exception:
+        key_bytes = raw_secret.encode()
+
+    msg = f"{webhook_id}.{webhook_timestamp}.{payload.decode()}"
+    digest = hmac.new(key_bytes, msg.encode(), hashlib.sha256).digest()
+    expected = f"v1,{base64.b64encode(digest).decode()}"
+
+    return any(
+        hmac.compare_digest(expected, sig.strip())
+        for sig in webhook_signature.split(" ")
+    )
 
 
-# ---------------------------------------------------------------------------
-# PayPal Webhook
-# ---------------------------------------------------------------------------
-@app.post("/webhook/paypal")
-async def paypal_webhook(request: Request):
+@app.post("/webhook/dodopayments")
+async def dodo_webhook(
+    request: Request,
+    webhook_id: Optional[str] = Header(None, alias="webhook-id"),
+    webhook_timestamp: Optional[str] = Header(None, alias="webhook-timestamp"),
+    webhook_signature: Optional[str] = Header(None, alias="webhook-signature"),
+):
     """
-    Handle PayPal subscription lifecycle events.
+    Handle DodoPayments subscription lifecycle events.
 
     Events handled:
-    - BILLING.SUBSCRIPTION.ACTIVATED   -> upgrade to pro
-    - BILLING.SUBSCRIPTION.CANCELLED   -> downgrade to free
-    - BILLING.SUBSCRIPTION.EXPIRED     -> downgrade to free
-    - BILLING.SUBSCRIPTION.SUSPENDED   -> downgrade to free
+      subscription.active    → upgrade user to pro
+      subscription.cancelled → downgrade to free
+      subscription.expired   → downgrade to free
+      subscription.on_hold   → downgrade to free (payment failed)
 
-    Setup in PayPal Developer Dashboard:
-    1. My Apps & Credentials -> your app -> Webhooks -> Add Webhook
-    2. URL: https://api.yourdomain.com/webhook/paypal
-    3. Select events: BILLING.SUBSCRIPTION.*
-    4. Copy Webhook ID to env PAYPAL_WEBHOOK_ID
+    Setup in DodoPayments dashboard:
+      1. Developers → Webhooks → Add Endpoint
+      2. URL: https://apicore.ntotech.top/webhook/dodopayments
+      3. Select all subscription.* events
+      4. Copy the signing secret to .env DODOPAYMENTS_WEBHOOK_SECRET
 
-    User email is stored as custom_id on the subscription (set during
-    createSubscription in the frontend SDK call).
+    The customer email must be passed as metadata when creating the checkout
+    session so we can look up the user here.
     """
+    if not DODOPAYMENTS_WEBHOOK_SECRET:
+        raise HTTPException(500, "DodoPayments webhook secret not configured")
+
     body = await request.body()
-    hdrs = dict(request.headers)
+
+    if not webhook_id or not webhook_timestamp or not webhook_signature:
+        raise HTTPException(400, "Missing webhook signature headers")
+
+    if not _verify_dodo_signature(
+        body, webhook_id, webhook_timestamp, webhook_signature, DODOPAYMENTS_WEBHOOK_SECRET
+    ):
+        raise HTTPException(403, "Invalid webhook signature")
+
     data = json.loads(body)
+    event_type = data.get("type", "")
 
-    if PAYPAL_WEBHOOK_ID:
-        valid = await paypal_verify_webhook(hdrs, body, data)
-        if not valid:
-            raise HTTPException(403, "Invalid PayPal webhook signature")
+    # DodoPayments payload structure:
+    # { "type": "subscription.active", "data": { "payload": { ... } } }
+    payload = data.get("data", {}).get("payload", {})
+    subscription_id = payload.get("subscription_id", "")
 
-    event_type = data.get("event_type", "")
-    resource = data.get("resource", {})
-
-    subscription_id = resource.get("id", "")
-    # custom_id holds the user's email, set during frontend createSubscription
-    user_email = resource.get("custom_id", "").lower().strip()
+    # Extract customer email — try common field paths
+    customer = payload.get("customer", {})
+    user_email = (
+        customer.get("email")
+        or payload.get("customer_email")
+        or payload.get("email")
+        or ""
+    ).lower().strip()
 
     if not user_email:
-        return {"status": "skipped", "reason": "no user email in custom_id"}
+        return {"status": "skipped", "reason": "no customer email in payload"}
 
     if not get_user_by_email(user_email):
         return {"status": "skipped", "reason": "user not found"}
 
-    if event_type == "BILLING.SUBSCRIPTION.ACTIVATED":
-        update_user_plan(
-            email=user_email,
-            plan="pro",
-            pp_subscription_id=subscription_id,
-        )
+    if event_type == "subscription.active":
+        update_user_plan(user_email, "pro", dp_subscription_id=subscription_id)
         return {"status": "upgraded", "email": user_email}
 
-    if event_type in (
-        "BILLING.SUBSCRIPTION.CANCELLED",
-        "BILLING.SUBSCRIPTION.EXPIRED",
-        "BILLING.SUBSCRIPTION.SUSPENDED",
-    ):
-        update_user_plan(email=user_email, plan="free")
+    if event_type in ("subscription.cancelled", "subscription.expired", "subscription.on_hold"):
+        update_user_plan(user_email, "free")
         return {"status": "downgraded", "email": user_email}
 
     return {"status": "ignored", "event_type": event_type}
-
-
-# ---------------------------------------------------------------------------
-# PayPal Capture (called by frontend after user approves subscription)
-# ---------------------------------------------------------------------------
-@app.post("/paypal/capture")
-async def paypal_capture(
-    req: PayPalCaptureRequest,
-    authorization: Optional[str] = Header(None),
-):
-    """
-    Frontend calls this after PayPal onApprove with the subscriptionID.
-    Backend verifies the subscription with PayPal and upgrades the user to pro.
-
-    Requires user to be logged in (Bearer token).
-    """
-    if not PAYPAL_CLIENT_ID or not PAYPAL_CLIENT_SECRET:
-        raise HTTPException(500, "PayPal not configured")
-
-    user = await get_current_user(authorization)
-
-    sub = await paypal_get_subscription(req.subscription_id)
-    status = sub.get("status", "")
-
-    # Verify the subscription belongs to the authenticated user (conditional: sandbox may omit this)
-    subscriber_email = sub.get("subscriber", {}).get("email_address", "").lower().strip()
-    if subscriber_email and subscriber_email != user["email"]:
-        raise HTTPException(403, "Subscription does not belong to this account")
-
-    if status not in ("ACTIVE", "APPROVED"):
-        raise HTTPException(400, f"Subscription not active (status={status})")
-
-    update_user_plan(
-        email=user["email"],
-        plan="pro",
-        pp_subscription_id=req.subscription_id,
-    )
-    return {"status": "upgraded", "plan": "pro"}
 
 
 # ---------------------------------------------------------------------------
@@ -552,10 +375,8 @@ async def generate_for_platform(
 # ---------------------------------------------------------------------------
 @app.post("/generate", response_model=GenerateResponse)
 async def generate(req: GenerateRequest, authorization: Optional[str] = Header(None)):
-    """Generate product listings. Requires authentication."""
     user = await get_current_user(authorization)
 
-    # Check usage limit
     daily_limit = PRO_DAILY_LIMIT if user["plan"] == "pro" else FREE_DAILY_LIMIT
     used = get_daily_usage(user["id"])
     if used >= daily_limit:
@@ -566,7 +387,6 @@ async def generate(req: GenerateRequest, authorization: Optional[str] = Header(N
         )
         raise HTTPException(429, detail={"message": msg, "remaining": 0})
 
-    # Validate & generate
     platforms = req.validate_platforms()
     tasks = [
         generate_for_platform(p, req.product_name, req.features, req.audience or "", req.tone)
@@ -574,7 +394,6 @@ async def generate(req: GenerateRequest, authorization: Optional[str] = Header(N
     ]
     results = await asyncio.gather(*tasks)
 
-    # Consume usage
     new_count = increment_usage(user["id"])
     remaining = max(daily_limit - new_count, 0)
 
@@ -582,21 +401,14 @@ async def generate(req: GenerateRequest, authorization: Optional[str] = Header(N
 
 
 # ---------------------------------------------------------------------------
-# Config (public — used by frontend to determine payment provider)
+# Config (public — used by frontend)
 # ---------------------------------------------------------------------------
 @app.get("/config")
 async def get_config():
-    """Return active payment provider info for the frontend."""
-    if PAYMENT_PROVIDER == "paypal":
-        return {
-            "payment_provider": "paypal",
-            "paypal_client_id": PAYPAL_CLIENT_ID,
-            "paypal_plan_id": PAYPAL_PLAN_ID,
-        }
-    # Default: lemonsqueezy
+    """Return payment provider info for the frontend."""
     return {
-        "payment_provider": "lemonsqueezy",
-        "checkout_url": LEMONSQUEEZY_CHECKOUT_URL,
+        "payment_provider": "dodopayments",
+        "checkout_url": DODOPAYMENTS_CHECKOUT_URL,
     }
 
 
@@ -605,7 +417,7 @@ async def get_config():
 # ---------------------------------------------------------------------------
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": "0.2.0"}
+    return {"status": "ok", "version": "0.3.0"}
 
 
 # ---------------------------------------------------------------------------
