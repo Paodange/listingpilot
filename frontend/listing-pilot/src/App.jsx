@@ -82,6 +82,25 @@ const btnPrimary = {
 };
 
 // ---------------------------------------------------------------------------
+// Footer
+// ---------------------------------------------------------------------------
+function Footer() {
+  const linkStyle = {
+    color: "#94a3b8", fontSize: "12px", textDecoration: "none", fontFamily: font,
+  };
+  return (
+    <div style={{
+      textAlign: "center", padding: "24px 16px 32px",
+      display: "flex", justifyContent: "center", gap: "24px", flexWrap: "wrap",
+    }}>
+      <a href="/privacy.html" target="_blank" rel="noopener noreferrer" style={linkStyle}>Privacy Policy</a>
+      <a href="/terms.html"   target="_blank" rel="noopener noreferrer" style={linkStyle}>Terms of Service</a>
+      <a href="/terms.html#refund" target="_blank" rel="noopener noreferrer" style={linkStyle}>Refund Policy</a>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // CopyButton
 // ---------------------------------------------------------------------------
 function CopyButton({ text, label }) {
@@ -279,6 +298,7 @@ function AuthScreen({ onLogin }) {
         <p style={{ textAlign: "center", fontSize: "12px", color: "#94a3b8", marginTop: "16px" }}>
           Free account includes 3 generations per day
         </p>
+        <Footer />
       </div>
     </div>
   );
@@ -433,16 +453,24 @@ function MainApp({ token, user: initUser, onLogout }) {
             {user.plan !== "free" ? (
               <span style={{ fontSize: "12px", color: "#34d399", fontWeight: 600 }}>✦ Pro</span>
             ) : paymentConfig?.checkout_url ? (
-              <a
-                href={`${paymentConfig.checkout_url}?customer_email=${encodeURIComponent(user.email)}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{
-                  padding: "7px 16px", fontSize: "13px", fontWeight: 600,
-                  background: blue, color: "#fff", border: "none", borderRadius: "8px",
-                  textDecoration: "none", fontFamily: font,
-                }}
-              >Upgrade — $5/mo</a>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "4px" }}>
+                <a
+                  href={`${paymentConfig.checkout_url}?customer_email=${encodeURIComponent(user.email)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    padding: "7px 16px", fontSize: "13px", fontWeight: 600,
+                    background: blue, color: "#fff", border: "none", borderRadius: "8px",
+                    textDecoration: "none", fontFamily: font,
+                  }}
+                >Upgrade — $5/mo</a>
+                <span style={{ fontSize: "10px", color: "#64748b" }}>
+                  By subscribing you agree to our{" "}
+                  <a href="/terms.html" target="_blank" rel="noopener noreferrer" style={{ color: "#94a3b8" }}>Terms</a>
+                  {" & "}
+                  <a href="/privacy.html" target="_blank" rel="noopener noreferrer" style={{ color: "#94a3b8" }}>Privacy Policy</a>
+                </span>
+              </div>
             ) : null}
             <span style={{ fontSize: "12px", color: "#64748b" }}>{user.email}</span>
             <button onClick={onLogout} style={{
@@ -561,6 +589,8 @@ function MainApp({ token, user: initUser, onLogout }) {
           </div>
         )}
       </div>
+
+      <Footer />
 
       <style>{`
         @keyframes fadeIn { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
