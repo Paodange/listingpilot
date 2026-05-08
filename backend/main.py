@@ -1,10 +1,9 @@
 """
 ListingPilot Backend
-AI-powered e-commerce listing generator with DodoPayments subscription support.
+AI-powered e-commerce listing generator with Creem subscription support.
 """
 
 import asyncio
-import base64
 import hashlib
 import hmac
 import json
@@ -42,10 +41,11 @@ PRO_DAILY_LIMIT = int(os.getenv("PRO_DAILY_LIMIT", "100"))
 
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 
-# DodoPayments
-DODOPAYMENTS_API_KEY       = os.getenv("DODOPAYMENTS_API_KEY", "")
-DODOPAYMENTS_WEBHOOK_SECRET = os.getenv("DODOPAYMENTS_WEBHOOK_SECRET", "")
-DODOPAYMENTS_CHECKOUT_URL  = os.getenv("DODOPAYMENTS_CHECKOUT_URL", "")  # payment link from dashboard
+# Creem
+CREEM_API_KEY        = os.getenv("CREEM_API_KEY", "")
+CREEM_WEBHOOK_SECRET = os.getenv("CREEM_WEBHOOK_SECRET", "")
+CREEM_CHECKOUT_URL   = os.getenv("CREEM_CHECKOUT_URL", "")  # payment link from Creem dashboard
+CREEM_TEST_MODE      = os.getenv("CREEM_TEST_MODE", "false").lower() == "true"
 
 ALLOWED_ORIGINS = os.getenv(
     "ALLOWED_ORIGINS",
@@ -214,88 +214,69 @@ async def google_login(req: GoogleLoginRequest):
 
 
 # ---------------------------------------------------------------------------
-# DodoPayments Webhook
+# Creem Webhook
 # ---------------------------------------------------------------------------
-def _verify_dodo_signature(
-    payload: bytes,
-    webhook_id: str,
-    webhook_timestamp: str,
-    webhook_signature: str,
-    secret: str,
-) -> bool:
+def _verify_creem_signature(payload: bytes, signature: str, secret: str) -> bool:
     """
-    Verify DodoPayments webhook using Svix-style HMAC-SHA256.
-    Signature header format: "v1,<base64(hmac)>" (space-separated for multiple)
-    Secret is base64-encoded (strip "whsec_" prefix if present).
+    Verify Creem webhook using HMAC-SHA256.
+    Header `creem-signature` contains the hex digest of HMAC-SHA256(secret, raw_body).
     """
-    raw_secret = secret.removeprefix("whsec_")
-    try:
-        key_bytes = base64.b64decode(raw_secret)
-    except Exception:
-        key_bytes = raw_secret.encode()
-
-    msg = f"{webhook_id}.{webhook_timestamp}.{payload.decode()}"
-    digest = hmac.new(key_bytes, msg.encode(), hashlib.sha256).digest()
-    expected = f"v1,{base64.b64encode(digest).decode()}"
-
-    return any(
-        hmac.compare_digest(expected, sig.strip())
-        for sig in webhook_signature.split(" ")
-    )
+    digest = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(digest, signature.strip())
 
 
-@app.post("/webhook/dodopayments")
-async def dodo_webhook(
+@app.post("/webhook/creem")
+async def creem_webhook(
     request: Request,
-    webhook_id: Optional[str] = Header(None, alias="webhook-id"),
-    webhook_timestamp: Optional[str] = Header(None, alias="webhook-timestamp"),
-    webhook_signature: Optional[str] = Header(None, alias="webhook-signature"),
+    creem_signature: Optional[str] = Header(None, alias="creem-signature"),
 ):
     """
-    Handle DodoPayments subscription lifecycle events.
+    Handle Creem subscription lifecycle events.
 
     Events handled:
+      checkout.completed     → upgrade user to pro
       subscription.active    → upgrade user to pro
-      subscription.cancelled → downgrade to free
+      subscription.paid      → keep user on pro (renewal)
+      subscription.canceled  → downgrade to free
       subscription.expired   → downgrade to free
-      subscription.on_hold   → downgrade to free (payment failed)
 
-    Setup in DodoPayments dashboard:
+    Setup in Creem dashboard:
       1. Developers → Webhooks → Add Endpoint
-      2. URL: https://apicore.ntotech.top/webhook/dodopayments
-      3. Select all subscription.* events
-      4. Copy the signing secret to .env DODOPAYMENTS_WEBHOOK_SECRET
+      2. URL: https://apicore.ntotech.top/webhook/creem
+      3. Subscribe to checkout.completed + all subscription.* events
+      4. Copy the signing secret to .env CREEM_WEBHOOK_SECRET
 
-    The customer email must be passed as metadata when creating the checkout
-    session so we can look up the user here.
+    Creem checkout link should pass `?email=<user_email>` so the customer
+    object on the webhook contains the email we use to look up the user.
     """
-    if not DODOPAYMENTS_WEBHOOK_SECRET:
-        raise HTTPException(500, "DodoPayments webhook secret not configured")
+    if not CREEM_WEBHOOK_SECRET:
+        raise HTTPException(500, "Creem webhook secret not configured")
 
     body = await request.body()
 
-    if not webhook_id or not webhook_timestamp or not webhook_signature:
-        raise HTTPException(400, "Missing webhook signature headers")
+    if not creem_signature:
+        raise HTTPException(400, "Missing creem-signature header")
 
-    if not _verify_dodo_signature(
-        body, webhook_id, webhook_timestamp, webhook_signature, DODOPAYMENTS_WEBHOOK_SECRET
-    ):
+    if not _verify_creem_signature(body, creem_signature, CREEM_WEBHOOK_SECRET):
         raise HTTPException(403, "Invalid webhook signature")
 
     data = json.loads(body)
-    event_type = data.get("type", "")
+    event_type = data.get("eventType") or data.get("event_type") or ""
 
-    # DodoPayments payload structure:
-    # { "type": "subscription.active", "data": { "payload": { ... } } }
-    payload = data.get("data", {}).get("payload", {})
-    subscription_id = payload.get("subscription_id", "")
+    # Creem payload: { "id": "evt_x", "eventType": "...", "object": { ... } }
+    obj = data.get("object", {}) or data.get("data", {})
+    subscription_id = (
+        obj.get("subscription_id")
+        or (obj.get("subscription") or {}).get("id")
+        or (obj.get("id") if event_type.startswith("subscription.") else "")
+        or ""
+    )
 
-    # Extract customer email — try common field paths
-    customer = payload.get("customer", {})
+    customer = obj.get("customer") or {}
     user_email = (
-        customer.get("email")
-        or payload.get("customer_email")
-        or payload.get("email")
+        (customer.get("email") if isinstance(customer, dict) else "")
+        or obj.get("customer_email")
+        or obj.get("email")
         or ""
     ).lower().strip()
 
@@ -305,11 +286,11 @@ async def dodo_webhook(
     if not get_user_by_email(user_email):
         return {"status": "skipped", "reason": "user not found"}
 
-    if event_type == "subscription.active":
-        update_user_plan(user_email, "pro", dp_subscription_id=subscription_id)
+    if event_type in ("checkout.completed", "subscription.active", "subscription.paid"):
+        update_user_plan(user_email, "pro", subscription_id=subscription_id)
         return {"status": "upgraded", "email": user_email}
 
-    if event_type in ("subscription.cancelled", "subscription.expired", "subscription.on_hold"):
+    if event_type in ("subscription.canceled", "subscription.cancelled", "subscription.expired"):
         update_user_plan(user_email, "free")
         return {"status": "downgraded", "email": user_email}
 
@@ -407,8 +388,9 @@ async def generate(req: GenerateRequest, authorization: Optional[str] = Header(N
 async def get_config():
     """Return payment provider info for the frontend."""
     return {
-        "payment_provider": "dodopayments",
-        "checkout_url": DODOPAYMENTS_CHECKOUT_URL,
+        "payment_provider": "creem",
+        "checkout_url": CREEM_CHECKOUT_URL,
+        "test_mode": CREEM_TEST_MODE,
     }
 
 

@@ -455,7 +455,7 @@ function MainApp({ token, user: initUser, onLogout }) {
             ) : paymentConfig?.checkout_url ? (
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "4px" }}>
                 <a
-                  href={`${paymentConfig.checkout_url}?customer_email=${encodeURIComponent(user.email)}`}
+                  href={`${paymentConfig.checkout_url}?email=${encodeURIComponent(user.email)}&request_id=${encodeURIComponent(user.id)}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   style={{
@@ -463,7 +463,7 @@ function MainApp({ token, user: initUser, onLogout }) {
                     background: blue, color: "#fff", border: "none", borderRadius: "8px",
                     textDecoration: "none", fontFamily: font,
                   }}
-                >Upgrade — $5/mo</a>
+                >Upgrade — $5/mo{paymentConfig?.test_mode ? " (Test)" : ""}</a>
                 <span style={{ fontSize: "10px", color: "#64748b" }}>
                   By subscribing you agree to our{" "}
                   <a href="/terms.html" target="_blank" rel="noopener noreferrer" style={{ color: "#94a3b8" }}>Terms</a>

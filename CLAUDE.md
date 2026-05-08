@@ -4,7 +4,7 @@
 
 ## 项目概述
 
-**ListingPilot** — 一个全栈 SaaS 应用，使用 DeepSeek AI API 生成电商平台产品列表（Amazon、Shopify、Etsy、eBay）。用户注册/登录后，提交产品信息，即可获得针对各平台优化的产品描述。付费套餐（通过 DodoPayments，$5/月）可解锁更高的每日生成次数上限。
+**ListingPilot** — 一个全栈 SaaS 应用，使用 DeepSeek AI API 生成电商平台产品列表（Amazon、Shopify、Etsy、eBay）。用户注册/登录后，提交产品信息，即可获得针对各平台优化的产品描述。付费套餐（通过 Creem，$5/月）可解锁更高的每日生成次数上限。
 
 ## 常用命令
 
@@ -42,7 +42,10 @@ JWT_SECRET=              # 72 位随机字符串
 TOKEN_EXPIRE_HOURS=72
 FREE_DAILY_LIMIT=3
 PRO_DAILY_LIMIT=100
-LEMONSQUEEZY_WEBHOOK_SECRET=
+CREEM_API_KEY=
+CREEM_WEBHOOK_SECRET=
+CREEM_CHECKOUT_URL=
+CREEM_TEST_MODE=true
 GOOGLE_CLIENT_ID=
 ALLOWED_ORIGINS=http://localhost:5173
 PORT=8000
@@ -60,7 +63,7 @@ PORT=8000
 **路由分组：**
 - `/auth/*` — 注册、登录、Google OAuth、`/auth/me`
 - `/generate` — 主要列表生成接口（需要 Bearer token，检查每日限额）
-- `/webhook/lemonsqueezy` — 将用户套餐从 `free` 升级为 `pro`
+- `/webhook/creem` — 接收 Creem 订阅事件，将用户套餐在 `free`/`pro` 之间切换
 - `/health`
 
 **数据库：** SQLite 文件位于 `backend/data/listingpilot.db`，首次运行时自动创建。代码注释中已标明计划迁移至 PostgreSQL。

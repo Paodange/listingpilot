@@ -36,7 +36,7 @@ def init_db():
                 email                TEXT UNIQUE NOT NULL,
                 password             TEXT NOT NULL,
                 plan                 TEXT NOT NULL DEFAULT 'free',
-                dp_subscription_id   TEXT DEFAULT '',
+                subscription_id      TEXT DEFAULT '',
                 created_at           REAL NOT NULL,
                 updated_at           REAL NOT NULL
             )
@@ -53,8 +53,8 @@ def init_db():
         """)
         # Migrations for existing databases
         cols = [r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
-        if "dp_subscription_id" not in cols:
-            conn.execute("ALTER TABLE users ADD COLUMN dp_subscription_id TEXT DEFAULT ''")
+        if "subscription_id" not in cols:
+            conn.execute("ALTER TABLE users ADD COLUMN subscription_id TEXT DEFAULT ''")
 
 
 # ----- User CRUD -----
@@ -88,14 +88,14 @@ def get_user_by_id(user_id: int) -> dict | None:
 def update_user_plan(
     email: str,
     plan: str,
-    dp_subscription_id: str | None = None,
+    subscription_id: str | None = None,
 ):
     now = time.time()
     fields = ["plan=?", "updated_at=?"]
     values: list = [plan, now]
-    if dp_subscription_id is not None:
-        fields.insert(1, "dp_subscription_id=?")
-        values.insert(1, dp_subscription_id)
+    if subscription_id is not None:
+        fields.insert(1, "subscription_id=?")
+        values.insert(1, subscription_id)
     values.append(email)
     with get_db() as conn:
         conn.execute(
